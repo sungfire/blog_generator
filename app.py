@@ -95,11 +95,19 @@ class BlogWriterApp:
 
     def _extract_pdf_worker(self, path: str, api_key: str, model: str) -> None:
         try:
-            extracted = extract_pdf_text(path, api_key=api_key, model=model or DEFAULT_MODEL)
+            extracted = extract_pdf_text(
+                path,
+                api_key=api_key,
+                model=model or DEFAULT_MODEL,
+                progress_callback=self._ocr_progress,
+            )
             preview = mask_sensitive_text(extracted) if self.mask_before_send.get() else extracted
             self.root.after(0, self._show_extracted_pdf, preview)
         except Exception as exc:
             self.root.after(0, self._show_extract_error, str(exc))
+
+    def _ocr_progress(self, completed: int, total: int) -> None:
+        self.root.after(0, self.status.set, f"OpenAI OCR 처리 중... {completed}/{total}페이지")
 
     def _show_extracted_pdf(self, preview: str) -> None:
         self.source_text.delete("1.0", END)

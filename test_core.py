@@ -28,6 +28,11 @@ class CoreTest(unittest.TestCase):
         text = "서울중앙지방법원 판결\n사건 2024가단123\n원고 A\n피고 B\n주문\n이유\n" + "본문 " * 300
         self.assertTrue(core.is_extracted_text_usable(text))
 
+    def test_ocr_speed_defaults(self) -> None:
+        self.assertEqual(core.OCR_RENDER_SCALE, 1.5)
+        self.assertEqual(core.OCR_IMAGE_DETAIL, "auto")
+        self.assertEqual(core.OCR_MAX_WORKERS, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
 import ssl
@@ -12,10 +13,12 @@ OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 DEFAULT_MODEL = "gpt-4.1-mini"
 MAX_INPUT_CHARS = 45000
 MAX_OCR_PAGES = 30
-OCR_RENDER_SCALE = 2.0
+OCR_RENDER_SCALE = 1.5
+OCR_IMAGE_DETAIL = "auto"
+OCR_MAX_WORKERS = 3
 
 
-def extract_pdf_text(pdf_path: str, api_key: str = "", model: str = DEFAULT_MODEL) -> str:
+def extract_pdf_text(pdf_path: str, api_key: str = "", model: str = DEFAULT_MODEL, progress_callback=None) -> str:
     extracted = _extract_pdf_text_with_pymupdf(pdf_path)
     if is_extracted_text_usable(extracted):
         return extracted
@@ -30,7 +33,7 @@ def extract_pdf_text(pdf_path: str, api_key: str = "", model: str = DEFAULT_MODE
             "OpenAI API Key를 먼저 입력한 뒤 PDF를 다시 선택해 주세요."
         )
 
-    ocr_text = extract_pdf_text_with_openai_ocr(pdf_path, api_key, model or DEFAULT_MODEL)
+    ocr_text = extract_pdf_text_with_openai_ocr(pdf_path, api_key, model or DEFAULT_MODEL, progress_callback)
     if ocr_text:
         return ocr_text
 
@@ -96,13 +99,13 @@ def _extract_pdf_text_with_pypdf(pdf_path: str) -> str:
     return "\n\n".join(pages).strip()
 
 
-def extract_pdf_text_with_openai_ocr(pdf_path: str, api_key: str, model: str = DEFAULT_MODEL) -> str:
+def extract_pdf_text_with_openai_ocr(pdf_path: str, api_key: str, model: str = DEFAULT_MODEL, progress_callback=None) -> str:
     try:
         import fitz
     except ImportError as exc:
         raise RuntimeError("OpenAI OCR을 위해 PyMuPDF가 필요합니다. `pip install -r requirements.txt`를 실행해 주세요.") from exc
 
-    pages = []
+    rendered_pages = []
     with fitz.open(pdf_path) as document:
         page_count = min(len(document), MAX_OCR_PAGES)
         for page_index in range(page_count):
@@ -111,10 +114,28 @@ def extract_pdf_text_with_openai_ocr(pdf_path: str, api_key: str, model: str = D
             pixmap = page.get_pixmap(matrix=matrix, alpha=False)
             png_bytes = pixmap.tobytes("png")
             image_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
-            page_text = _ocr_page_with_openai(api_key, model, image_url, page_index + 1).strip()
-            if page_text:
-                pages.append(f"[{page_index + 1}페이지]\n{page_text}")
+            rendered_pages.append((page_index + 1, image_url))
 
+    results = {}
+    completed = 0
+    worker_count = min(OCR_MAX_WORKERS, len(rendered_pages)) or 1
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(_ocr_page_with_openai, api_key, model, image_url, page_number): page_number
+            for page_number, image_url in rendered_pages
+        }
+        for future in as_completed(futures):
+            page_number = futures[future]
+            results[page_number] = future.result().strip()
+            completed += 1
+            if progress_callback:
+                progress_callback(completed, len(rendered_pages))
+
+    pages = []
+    for page_number in sorted(results):
+        page_text = results[page_number]
+        if page_text:
+            pages.append(f"[{page_number}페이지]\n{page_text}")
     return "\n\n".join(pages).strip()
 
 
@@ -126,7 +147,7 @@ def _ocr_page_with_openai(api_key: str, model: str, image_url: str, page_number:
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": f"{OCR_PROMPT}\n\n현재 페이지: {page_number}페이지"},
-                    {"type": "input_image", "image_url": image_url, "detail": "high"},
+                    {"type": "input_image", "image_url": image_url, "detail": OCR_IMAGE_DETAIL},
                 ],
             }
         ],
