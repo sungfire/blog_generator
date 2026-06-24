@@ -33,6 +33,16 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(core.OCR_IMAGE_DETAIL, "auto")
         self.assertEqual(core.OCR_MAX_WORKERS, 3)
 
+    def test_remove_unsupported_temperature_for_retry(self) -> None:
+        payload = {"model": "gpt-5.5", "temperature": 0.4, "input": []}
+        retry = core.remove_unsupported_temperature_for_retry(
+            payload,
+            "Unsupported parameter: 'temperature' is not supported with this model.",
+        )
+        self.assertIsNotNone(retry)
+        self.assertNotIn("temperature", retry)
+        self.assertIn("temperature", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

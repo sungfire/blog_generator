@@ -193,6 +193,16 @@ def call_openai(api_key: str, model: str, judgment_text: str) -> str:
 
 
 def _post_openai_response(api_key: str, payload: dict) -> dict:
+    try:
+        return _send_openai_response(api_key, payload)
+    except RuntimeError as exc:
+        retry_payload = remove_unsupported_temperature_for_retry(payload, str(exc))
+        if retry_payload:
+            return _send_openai_response(api_key, retry_payload)
+        raise
+
+
+def _send_openai_response(api_key: str, payload: dict) -> dict:
     request = urllib.request.Request(
         OPENAI_RESPONSES_URL,
         data=json.dumps(payload).encode("utf-8"),
@@ -210,6 +220,16 @@ def _post_openai_response(api_key: str, payload: dict) -> dict:
         raise RuntimeError(f"OpenAI API 오류: HTTP {exc.code}\n{detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"OpenAI API 연결 실패: {exc.reason}") from exc
+
+
+def remove_unsupported_temperature_for_retry(payload: dict, error_message: str) -> dict | None:
+    if "Unsupported parameter" not in error_message or "temperature" not in error_message:
+        return None
+    if "temperature" not in payload:
+        return None
+    retry_payload = dict(payload)
+    retry_payload.pop("temperature", None)
+    return retry_payload
 
 
 def _extract_output_text(data: dict) -> str:
