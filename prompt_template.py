@@ -51,6 +51,9 @@ USER_PROMPT_TEMPLATE = """
 6. 상담 CTA 방식:
 {cta_method}
 
+7. 분야별 템플릿 및 CTA 세부 지시:
+{template_instruction}
+
 [작성 전 분석 절차]
 
 먼저 판결문에서 아래 내용을 추출하세요.

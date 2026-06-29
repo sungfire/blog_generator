@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 
 from prompt_template import OCR_PROMPT, PROHIBITED_EXPRESSIONS, SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from content_tools import build_template_instruction
 
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
@@ -200,6 +201,7 @@ def call_openai(
         region_keyword=region_keyword.strip() or "없음",
         firm_name=firm_name.strip() or "본 법률사무소",
         cta_method=cta_method.strip() or "사건 검토 요청",
+        template_instruction=build_template_instruction(practice_area, cta_method),
     )
     payload = {
         "model": model,

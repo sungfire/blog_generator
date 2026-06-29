@@ -3,6 +3,13 @@ from pathlib import Path
 import tempfile
 
 import core
+from content_tools import (
+    build_ad_risk_report,
+    build_seo_checklist,
+    build_template_instruction,
+    get_cta_instruction,
+    get_practice_template,
+)
 from config_store import delete_api_key, load_api_key, save_api_key
 
 
@@ -59,6 +66,7 @@ class CoreTest(unittest.TestCase):
             region_keyword="없음",
             firm_name="본 법률사무소",
             cta_method="사건 검토 요청",
+            template_instruction="분야별 템플릿",
         )
         self.assertIn("핵심 키워드 10개", prompt)
         self.assertIn("릴스로 재가공할 경우의 30초 대본", prompt)
@@ -88,6 +96,54 @@ class CoreTest(unittest.TestCase):
         self.assertIn("<strong>강조</strong>", rendered)
         self.assertIn("<img", rendered)
         self.assertIn("C:/blog/image.png", rendered)
+
+    def test_practice_template_and_cta(self) -> None:
+        template = get_practice_template("형사")
+        self.assertIn("경찰조사", template["faq_focus"])
+        self.assertIn("카카오톡 상담", get_cta_instruction("카카오톡 상담형"))
+        instruction = build_template_instruction("전세사기", "증거자료 검토형")
+        self.assertIn("전세보증금", instruction)
+        self.assertIn("증거자료", instruction)
+
+    def test_ad_risk_report(self) -> None:
+        report = build_ad_risk_report("무조건 승소할 수 있습니다. 연락처는 010-1234-5678입니다.")
+        self.assertIn("금지 표현", report)
+        self.assertIn("결과 보장 의심", report)
+        self.assertIn("개인정보 노출 의심", report)
+        self.assertIn("수정 권장", report)
+
+    def test_seo_checklist(self) -> None:
+        sample = """
+1. 핵심 키워드 10개
+- 전세보증금 반환
+
+3. 추천 최종 제목 1개
+전세보증금 반환 판결로 본 대응 방법
+
+4. 블로그 본문
+전세보증금 반환 문제로 고민하는 분들이 많습니다.
+
+## 사건 개요
+본문입니다.
+
+## 핵심 쟁점
+본문입니다.
+
+## 법원의 판단
+본문입니다.
+
+## 상담이 필요한 경우
+본문입니다.
+
+5. FAQ
+Q. 전세보증금 반환 소송은 어떻게 준비하나요?
+
+#전세보증금 #임대차 #보증금반환 #부동산소송 #내용증명 #임차권등기 #법률상담 #부동산변호사
+""" + "본문" * 700
+        checklist = build_seo_checklist(sample, "서울")
+        self.assertIn("제목 길이", checklist)
+        self.assertIn("FAQ 포함", checklist)
+        self.assertIn("해시태그 수", checklist)
 
 
 if __name__ == "__main__":
