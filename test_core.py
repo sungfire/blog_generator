@@ -71,6 +71,24 @@ class CoreTest(unittest.TestCase):
             delete_api_key(config_path=config_path)
             self.assertEqual(load_api_key(config_path=config_path), "")
 
+    def test_convert_markdown_to_naver_text(self) -> None:
+        source = "## 핵심 쟁점\n\n**중요 문장**\n\n- 준비자료\n\n![이미지](C:/blog/image.png)"
+        converted = core.convert_markdown_to_naver_text(source)
+        self.assertIn("[소제목] 핵심 쟁점", converted)
+        self.assertIn("[강조] 중요 문장", converted)
+        self.assertIn("- 준비자료", converted)
+        self.assertIn("[이미지 삽입: 이미지]", converted)
+        self.assertNotIn("##", converted)
+        self.assertNotIn("**", converted)
+
+    def test_build_naver_html(self) -> None:
+        source = "## 핵심 쟁점\n\n본문의 **강조** 문장입니다.\n\n![이미지](C:/blog/image.png)"
+        rendered = core.build_naver_html(source)
+        self.assertIn("<h2>핵심 쟁점</h2>", rendered)
+        self.assertIn("<strong>강조</strong>", rendered)
+        self.assertIn("<img", rendered)
+        self.assertIn("C:/blog/image.png", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

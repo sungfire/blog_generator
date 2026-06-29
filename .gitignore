@@ -3,5 +3,8 @@ build/
 dist/
 outputs/
 __pycache__/
+.blog_writer/
+BlogWriter/
+config.json
 *.spec
 *.pyc

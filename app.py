@@ -6,7 +6,16 @@ from tkinter import BOTH, END, LEFT, RIGHT, X, BooleanVar, IntVar, StringVar, Tk
 from tkinter import ttk
 
 from config_store import delete_api_key, load_api_key, save_api_key
-from core import DEFAULT_MODEL, call_openai, extract_pdf_text, generate_blog_images, mask_sensitive_text, scan_prohibited_expressions
+from core import (
+    DEFAULT_MODEL,
+    call_openai,
+    convert_markdown_to_naver_text,
+    extract_pdf_text,
+    generate_blog_images,
+    mask_sensitive_text,
+    save_naver_html,
+    scan_prohibited_expressions,
+)
 
 
 APP_TITLE = "판결문 기반 네이버 블로그 글 생성기"
@@ -80,6 +89,8 @@ class BlogWriterApp:
         ttk.Label(action_row, text="이미지 수").pack(side=LEFT, padx=(8, 4))
         ttk.Spinbox(action_row, from_=1, to=5, textvariable=self.image_count, width=4).pack(side=LEFT)
         ttk.Button(action_row, text="결과 저장", command=self.save_result).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="네이버용 복사", command=self.copy_naver_text).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="HTML 미리보기 저장", command=self.save_html_preview).pack(side=LEFT, padx=(8, 0))
         ttk.Button(action_row, text="결과 지우기", command=self.clear_result).pack(side=LEFT, padx=(8, 0))
         ttk.Label(action_row, textvariable=self.status).pack(side=LEFT, padx=(16, 0))
 
@@ -286,6 +297,36 @@ class BlogWriterApp:
             return
         Path(path).write_text(result, encoding="utf-8")
         self.status.set(f"저장 완료: {path}")
+
+    def copy_naver_text(self) -> None:
+        result = self.result_text.get("1.0", END).strip()
+        if not result:
+            messagebox.showwarning(APP_TITLE, "복사할 결과가 없습니다.")
+            return
+        naver_text = convert_markdown_to_naver_text(result)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(naver_text)
+        self.root.update()
+        self.status.set("네이버 붙여넣기용 텍스트를 클립보드에 복사했습니다.")
+
+    def save_html_preview(self) -> None:
+        result = self.result_text.get("1.0", END).strip()
+        if not result:
+            messagebox.showwarning(APP_TITLE, "저장할 결과가 없습니다.")
+            return
+        default_name = "naver_blog_preview.html"
+        if self.pdf_path.get():
+            default_name = f"{Path(self.pdf_path.get()).stem}_naver_preview.html"
+        path = filedialog.asksaveasfilename(
+            title="HTML 미리보기 저장",
+            defaultextension=".html",
+            initialfile=default_name,
+            filetypes=[("HTML files", "*.html")],
+        )
+        if not path:
+            return
+        save_naver_html(result, Path(path))
+        self.status.set(f"HTML 미리보기 저장 완료: {path}")
 
     def clear_result(self) -> None:
         self.result_text.delete("1.0", END)

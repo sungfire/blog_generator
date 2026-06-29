@@ -1,5 +1,6 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import html
 from pathlib import Path
 import json
 import re
@@ -249,6 +250,172 @@ def build_blog_image_prompts(blog_text: str, count: int) -> list[str]:
             f"Article context for visual relevance: {excerpt}"
         )
     return prompts
+
+
+def convert_markdown_to_naver_text(text: str) -> str:
+    lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            lines.append("")
+            continue
+
+        image_match = re.match(r"!\[(.*?)\]\((.*?)\)", stripped)
+        if image_match:
+            alt_text = image_match.group(1).strip() or "이미지"
+            image_path = image_match.group(2).strip()
+            lines.append(f"[이미지 삽입: {alt_text}]")
+            lines.append(f"파일: {image_path}")
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading_match:
+            heading_text = _strip_inline_markdown(heading_match.group(2))
+            lines.append(f"[소제목] {heading_text}")
+            continue
+
+        if re.match(r"^\*\*(.+)\*\*$", stripped):
+            lines.append(f"[강조] {_strip_inline_markdown(stripped)}")
+            continue
+
+        cleaned = _strip_inline_markdown(line)
+        cleaned = re.sub(r"^\s*[-*]\s+", "- ", cleaned)
+        lines.append(cleaned)
+
+    return _collapse_blank_lines("\n".join(lines)).strip()
+
+
+def build_naver_html(text: str) -> str:
+    body = _markdown_like_to_html(text)
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>네이버 블로그 붙여넣기용 미리보기</title>
+  <style>
+    body {{
+      font-family: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif;
+      line-height: 1.75;
+      color: #222;
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 0 24px;
+      background: #fff;
+    }}
+    h1 {{ font-size: 28px; margin: 32px 0 18px; }}
+    h2 {{ font-size: 22px; margin: 30px 0 14px; }}
+    h3 {{ font-size: 18px; margin: 24px 0 12px; }}
+    p {{ font-size: 16px; margin: 0 0 14px; }}
+    ul, ol {{ margin: 0 0 16px 24px; padding: 0; }}
+    li {{ margin: 6px 0; }}
+    strong {{ font-weight: 700; }}
+    em {{ font-style: italic; }}
+    img {{ max-width: 100%; display: block; margin: 22px 0; }}
+    .image-note {{
+      border: 1px solid #ddd;
+      background: #f7f7f7;
+      padding: 12px;
+      margin: 18px 0;
+      color: #555;
+    }}
+  </style>
+</head>
+<body>
+{body}
+</body>
+</html>
+"""
+
+
+def save_naver_html(text: str, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(build_naver_html(text), encoding="utf-8")
+    return output_path
+
+
+def _strip_inline_markdown(text: str) -> str:
+    cleaned = re.sub(r"!\[(.*?)\]\((.*?)\)", r"\1 (\2)", text)
+    cleaned = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", cleaned)
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)", r"\1", cleaned)
+    cleaned = re.sub(r"_(.*?)_", r"\1", cleaned)
+    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)
+    return cleaned
+
+
+def _collapse_blank_lines(text: str) -> str:
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _markdown_like_to_html(text: str) -> str:
+    html_lines = []
+    list_mode = None
+
+    def close_list() -> None:
+        nonlocal list_mode
+        if list_mode:
+            html_lines.append(f"</{list_mode}>")
+            list_mode = None
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            close_list()
+            continue
+
+        image_match = re.match(r"!\[(.*?)\]\((.*?)\)", stripped)
+        if image_match:
+            close_list()
+            alt_text = html.escape(image_match.group(1).strip() or "블로그 이미지")
+            image_path = html.escape(image_match.group(2).strip())
+            html_lines.append(f'<p class="image-note">이미지 파일: {image_path}</p>')
+            html_lines.append(f'<img src="{image_path}" alt="{alt_text}">')
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading_match:
+            close_list()
+            level = min(len(heading_match.group(1)), 3)
+            heading_text = _inline_markdown_to_html(heading_match.group(2))
+            html_lines.append(f"<h{level}>{heading_text}</h{level}>")
+            continue
+
+        ordered_match = re.match(r"^\d+\.\s+(.+)$", stripped)
+        if ordered_match:
+            if list_mode != "ol":
+                close_list()
+                html_lines.append("<ol>")
+                list_mode = "ol"
+            html_lines.append(f"<li>{_inline_markdown_to_html(ordered_match.group(1))}</li>")
+            continue
+
+        bullet_match = re.match(r"^[-*]\s+(.+)$", stripped)
+        if bullet_match:
+            if list_mode != "ul":
+                close_list()
+                html_lines.append("<ul>")
+                list_mode = "ul"
+            html_lines.append(f"<li>{_inline_markdown_to_html(bullet_match.group(1))}</li>")
+            continue
+
+        close_list()
+        html_lines.append(f"<p>{_inline_markdown_to_html(stripped)}</p>")
+
+    close_list()
+    return "\n".join(html_lines)
+
+
+def _inline_markdown_to_html(text: str) -> str:
+    escaped = html.escape(text)
+    escaped = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"__(.*?)__", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)", r"<em>\1</em>", escaped)
+    escaped = re.sub(r"_(.*?)_", r"<em>\1</em>", escaped)
+    escaped = re.sub(r"`([^`]*)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", escaped)
+    return escaped
 
 
 def _generate_image_bytes(api_key: str, prompt: str) -> bytes:
