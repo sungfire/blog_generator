@@ -181,9 +181,25 @@ def scan_prohibited_expressions(text: str) -> list[str]:
     return [expr for expr in PROHIBITED_EXPRESSIONS if expr in text]
 
 
-def call_openai(api_key: str, model: str, judgment_text: str) -> str:
+def call_openai(
+    api_key: str,
+    model: str,
+    judgment_text: str,
+    practice_area: str = "",
+    target_reader: str = "",
+    region_keyword: str = "",
+    firm_name: str = "",
+    cta_method: str = "",
+) -> str:
     clipped_text = judgment_text[:MAX_INPUT_CHARS]
-    user_prompt = USER_PROMPT_TEMPLATE.format(judgment_text=clipped_text)
+    user_prompt = USER_PROMPT_TEMPLATE.format(
+        judgment_text=clipped_text,
+        practice_area=practice_area.strip() or "판결문 내용을 바탕으로 가장 적절한 분야를 추론하세요.",
+        target_reader=target_reader.strip() or "판결문 내용을 바탕으로 주요 타깃 독자를 추론하세요.",
+        region_keyword=region_keyword.strip() or "없음",
+        firm_name=firm_name.strip() or "본 법률사무소",
+        cta_method=cta_method.strip() or "사건 검토 요청",
+    )
     payload = {
         "model": model,
         "input": [
@@ -191,7 +207,7 @@ def call_openai(api_key: str, model: str, judgment_text: str) -> str:
             {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
         ],
         "temperature": 0.4,
-        "max_output_tokens": 5000,
+        "max_output_tokens": 8000,
     }
 
     return _extract_output_text(_post_openai_response(api_key, payload))

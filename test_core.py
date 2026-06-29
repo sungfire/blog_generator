@@ -51,6 +51,18 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(len(prompts), 2)
         self.assertIn("Do not include readable text", prompts[0])
 
+    def test_call_openai_prompt_metadata_defaults(self) -> None:
+        prompt = core.USER_PROMPT_TEMPLATE.format(
+            judgment_text="판결문",
+            practice_area="",
+            target_reader="",
+            region_keyword="없음",
+            firm_name="본 법률사무소",
+            cta_method="사건 검토 요청",
+        )
+        self.assertIn("핵심 키워드 10개", prompt)
+        self.assertIn("릴스로 재가공할 경우의 30초 대본", prompt)
+
     def test_api_key_config_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"

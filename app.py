@@ -24,6 +24,11 @@ class BlogWriterApp:
         self.mask_before_send = BooleanVar(value=True)
         self.generate_images = BooleanVar(value=False)
         self.image_count = IntVar(value=2)
+        self.practice_area = StringVar()
+        self.target_reader = StringVar()
+        self.region_keyword = StringVar()
+        self.firm_name = StringVar()
+        self.cta_method = StringVar(value="사건 검토 요청")
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -50,6 +55,22 @@ class BlogWriterApp:
         ttk.Checkbutton(file_row, text="API 전송 전 민감정보 자동 마스킹", variable=self.mask_before_send).pack(
             side=LEFT, padx=(12, 0)
         )
+
+        options_row_1 = ttk.Frame(top)
+        options_row_1.pack(fill=X, pady=(0, 6))
+        ttk.Label(options_row_1, text="작성 분야").pack(side=LEFT)
+        ttk.Entry(options_row_1, textvariable=self.practice_area, width=16).pack(side=LEFT, padx=(4, 12))
+        ttk.Label(options_row_1, text="타깃 독자").pack(side=LEFT)
+        ttk.Entry(options_row_1, textvariable=self.target_reader, width=16).pack(side=LEFT, padx=(4, 12))
+        ttk.Label(options_row_1, text="지역 키워드").pack(side=LEFT)
+        ttk.Entry(options_row_1, textvariable=self.region_keyword, width=14).pack(side=LEFT, padx=(4, 12))
+
+        options_row_2 = ttk.Frame(top)
+        options_row_2.pack(fill=X, pady=(0, 10))
+        ttk.Label(options_row_2, text="변호사/법무법인명").pack(side=LEFT)
+        ttk.Entry(options_row_2, textvariable=self.firm_name, width=28).pack(side=LEFT, padx=(4, 12))
+        ttk.Label(options_row_2, text="상담 CTA").pack(side=LEFT)
+        ttk.Entry(options_row_2, textvariable=self.cta_method, width=24).pack(side=LEFT, padx=(4, 12))
 
         action_row = ttk.Frame(top)
         action_row.pack(fill=X, pady=(0, 10))
@@ -163,14 +184,40 @@ class BlogWriterApp:
                 judgment_text,
                 self.generate_images.get(),
                 self.image_count.get(),
+                self.practice_area.get(),
+                self.target_reader.get(),
+                self.region_keyword.get(),
+                self.firm_name.get(),
+                self.cta_method.get(),
             ),
             daemon=True,
         )
         thread.start()
 
-    def _generate_worker(self, api_key: str, model: str, judgment_text: str, should_generate_images: bool, image_count: int) -> None:
+    def _generate_worker(
+        self,
+        api_key: str,
+        model: str,
+        judgment_text: str,
+        should_generate_images: bool,
+        image_count: int,
+        practice_area: str,
+        target_reader: str,
+        region_keyword: str,
+        firm_name: str,
+        cta_method: str,
+    ) -> None:
         try:
-            result = call_openai(api_key, model or DEFAULT_MODEL, judgment_text)
+            result = call_openai(
+                api_key,
+                model or DEFAULT_MODEL,
+                judgment_text,
+                practice_area=practice_area,
+                target_reader=target_reader,
+                region_keyword=region_keyword,
+                firm_name=firm_name,
+                cta_method=cta_method,
+            )
             prohibited = scan_prohibited_expressions(result)
             if prohibited:
                 result += "\n\n[자동 경고]\n다음 광고 리스크 표현이 감지되었습니다. 게시 전 수정하세요: "
