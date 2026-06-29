@@ -1,5 +1,6 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 import json
 import re
 import ssl
@@ -10,7 +11,11 @@ from prompt_template import OCR_PROMPT, PROHIBITED_EXPRESSIONS, SYSTEM_PROMPT, U
 
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
 DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_IMAGE_MODEL = "gpt-image-2"
+DEFAULT_IMAGE_SIZE = "1024x1024"
+DEFAULT_IMAGE_QUALITY = "low"
 MAX_INPUT_CHARS = 45000
 MAX_OCR_PAGES = 30
 OCR_RENDER_SCALE = 1.5
@@ -190,6 +195,83 @@ def call_openai(api_key: str, model: str, judgment_text: str) -> str:
     }
 
     return _extract_output_text(_post_openai_response(api_key, payload))
+
+
+def generate_blog_images(api_key: str, blog_text: str, output_dir: Path, count: int = 2, progress_callback=None) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_count = max(1, min(count, 5))
+    image_paths = []
+    prompts = build_blog_image_prompts(blog_text, safe_count)
+
+    for index, prompt in enumerate(prompts, start=1):
+        image_bytes = _generate_image_bytes(api_key, prompt)
+        path = output_dir / f"blog_image_{index:02d}.png"
+        path.write_bytes(image_bytes)
+        image_paths.append(path)
+        if progress_callback:
+            progress_callback(index, safe_count)
+
+    return image_paths
+
+
+def build_blog_image_prompts(blog_text: str, count: int) -> list[str]:
+    excerpt = re.sub(r"\s+", " ", blog_text).strip()[:1200]
+    themes = [
+        "a clean editorial blog header image with legal documents, a fountain pen, and a subtle courthouse silhouette",
+        "a professional Korean law office desk scene with organized case files and calm natural light",
+        "an abstract legal dispute resolution concept with balanced scales, documents, and neutral blue-gray tones",
+        "a consultation scene represented without identifiable people, using chairs, documents, and a warm office atmosphere",
+        "a court judgment explanation concept image with paper files, bookmarks, and restrained professional styling",
+    ]
+    prompts = []
+    for theme in themes[: max(1, min(count, len(themes)))]:
+        prompts.append(
+            "Create a professional, non-sensational image for a Korean law firm Naver blog article. "
+            "Do not include readable text, real people, logos, court seals, names, case numbers, or any personal data. "
+            "Avoid dramatic crime-scene visuals. Use a trustworthy, modern, editorial style suitable for attorney marketing. "
+            f"Theme: {theme}. "
+            f"Article context for visual relevance: {excerpt}"
+        )
+    return prompts
+
+
+def _generate_image_bytes(api_key: str, prompt: str) -> bytes:
+    payload = {
+        "model": DEFAULT_IMAGE_MODEL,
+        "prompt": prompt,
+        "n": 1,
+        "size": DEFAULT_IMAGE_SIZE,
+        "quality": DEFAULT_IMAGE_QUALITY,
+        "output_format": "png",
+    }
+    data = _post_image_generation(api_key, payload)
+    image_data = data.get("data", [{}])[0]
+    if image_data.get("b64_json"):
+        return base64.b64decode(image_data["b64_json"])
+    if image_data.get("url"):
+        with urllib.request.urlopen(image_data["url"], timeout=120, context=ssl.create_default_context()) as response:
+            return response.read()
+    raise RuntimeError("OpenAI 이미지 응답에서 이미지 데이터를 찾지 못했습니다.")
+
+
+def _post_image_generation(api_key: str, payload: dict) -> dict:
+    request = urllib.request.Request(
+        OPENAI_IMAGES_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180, context=ssl.create_default_context()) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI 이미지 API 오류: HTTP {exc.code}\n{detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"OpenAI 이미지 API 연결 실패: {exc.reason}") from exc
 
 
 def _post_openai_response(api_key: str, payload: dict) -> dict:

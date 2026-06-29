@@ -1,6 +1,9 @@
 import unittest
+from pathlib import Path
+import tempfile
 
 import core
+from config_store import delete_api_key, load_api_key, save_api_key
 
 
 class CoreTest(unittest.TestCase):
@@ -42,6 +45,19 @@ class CoreTest(unittest.TestCase):
         self.assertIsNotNone(retry)
         self.assertNotIn("temperature", retry)
         self.assertIn("temperature", payload)
+
+    def test_build_blog_image_prompts(self) -> None:
+        prompts = core.build_blog_image_prompts("손해배상 청구 기각 사례 본문입니다.", 2)
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("Do not include readable text", prompts[0])
+
+    def test_api_key_config_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            save_api_key("sk-test", config_path=config_path)
+            self.assertEqual(load_api_key(config_path=config_path), "sk-test")
+            delete_api_key(config_path=config_path)
+            self.assertEqual(load_api_key(config_path=config_path), "")
 
 
 if __name__ == "__main__":

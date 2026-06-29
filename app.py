@@ -1,10 +1,12 @@
+from datetime import datetime
 import os
 import threading
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, X, BooleanVar, StringVar, Tk, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, RIGHT, X, BooleanVar, IntVar, StringVar, Tk, filedialog, messagebox
 from tkinter import ttk
 
-from core import DEFAULT_MODEL, call_openai, extract_pdf_text, mask_sensitive_text, scan_prohibited_expressions
+from config_store import delete_api_key, load_api_key, save_api_key
+from core import DEFAULT_MODEL, call_openai, extract_pdf_text, generate_blog_images, mask_sensitive_text, scan_prohibited_expressions
 
 
 APP_TITLE = "판결문 기반 네이버 블로그 글 생성기"
@@ -16,10 +18,12 @@ class BlogWriterApp:
         self.root.title(APP_TITLE)
         self.root.geometry("1040x760")
         self.pdf_path = StringVar()
-        self.api_key = StringVar(value=os.getenv("OPENAI_API_KEY", ""))
+        self.api_key = StringVar(value=os.getenv("OPENAI_API_KEY", "") or load_api_key())
         self.model = StringVar(value=DEFAULT_MODEL)
         self.status = StringVar(value="PDF 판결문을 선택하고 API Key를 입력해 주세요.")
         self.mask_before_send = BooleanVar(value=True)
+        self.generate_images = BooleanVar(value=False)
+        self.image_count = IntVar(value=2)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -33,6 +37,8 @@ class BlogWriterApp:
         key_row = ttk.Frame(top)
         key_row.pack(fill=X, pady=(4, 10))
         ttk.Entry(key_row, textvariable=self.api_key, show="*", width=80).pack(side=LEFT, fill=X, expand=True)
+        ttk.Button(key_row, text="API Key 저장", command=self.save_key).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(key_row, text="삭제", command=self.delete_key).pack(side=LEFT, padx=(4, 0))
         ttk.Label(key_row, text="Model").pack(side=LEFT, padx=(12, 4))
         ttk.Entry(key_row, textvariable=self.model, width=18).pack(side=LEFT)
 
@@ -49,6 +55,9 @@ class BlogWriterApp:
         action_row.pack(fill=X, pady=(0, 10))
         self.generate_button = ttk.Button(action_row, text="블로그 글 생성", command=self.generate)
         self.generate_button.pack(side=LEFT)
+        ttk.Checkbutton(action_row, text="본문 이미지 생성", variable=self.generate_images).pack(side=LEFT, padx=(12, 0))
+        ttk.Label(action_row, text="이미지 수").pack(side=LEFT, padx=(8, 4))
+        ttk.Spinbox(action_row, from_=1, to=5, textvariable=self.image_count, width=4).pack(side=LEFT)
         ttk.Button(action_row, text="결과 저장", command=self.save_result).pack(side=LEFT, padx=(8, 0))
         ttk.Button(action_row, text="결과 지우기", command=self.clear_result).pack(side=LEFT, padx=(8, 0))
         ttk.Label(action_row, textvariable=self.status).pack(side=LEFT, padx=(16, 0))
@@ -81,6 +90,9 @@ class BlogWriterApp:
         path = filedialog.askopenfilename(title="판결문 PDF 선택", filetypes=[("PDF files", "*.pdf")])
         if not path:
             return
+        api_key = self.api_key.get().strip()
+        if api_key:
+            save_api_key(api_key)
         self.pdf_path.set(path)
         self.status.set("PDF 분석 중입니다. 스캔본이면 OpenAI OCR을 사용합니다...")
         self.pdf_button.configure(state="disabled")
@@ -88,7 +100,7 @@ class BlogWriterApp:
         self.source_text.delete("1.0", END)
         thread = threading.Thread(
             target=self._extract_pdf_worker,
-            args=(path, self.api_key.get().strip(), self.model.get().strip()),
+            args=(path, api_key, self.model.get().strip()),
             daemon=True,
         )
         thread.start()
@@ -127,6 +139,7 @@ class BlogWriterApp:
         if not api_key:
             messagebox.showwarning(APP_TITLE, "OpenAI API Key를 입력해 주세요.")
             return
+        save_api_key(api_key)
         if not self.pdf_path.get():
             messagebox.showwarning(APP_TITLE, "판결문 PDF를 선택해 주세요.")
             return
@@ -142,19 +155,60 @@ class BlogWriterApp:
 
         self.generate_button.configure(state="disabled")
         self.status.set("ChatGPT API로 글을 생성 중입니다...")
-        thread = threading.Thread(target=self._generate_worker, args=(api_key, self.model.get().strip(), judgment_text), daemon=True)
+        thread = threading.Thread(
+            target=self._generate_worker,
+            args=(
+                api_key,
+                self.model.get().strip(),
+                judgment_text,
+                self.generate_images.get(),
+                self.image_count.get(),
+            ),
+            daemon=True,
+        )
         thread.start()
 
-    def _generate_worker(self, api_key: str, model: str, judgment_text: str) -> None:
+    def _generate_worker(self, api_key: str, model: str, judgment_text: str, should_generate_images: bool, image_count: int) -> None:
         try:
             result = call_openai(api_key, model or DEFAULT_MODEL, judgment_text)
             prohibited = scan_prohibited_expressions(result)
             if prohibited:
                 result += "\n\n[자동 경고]\n다음 광고 리스크 표현이 감지되었습니다. 게시 전 수정하세요: "
                 result += ", ".join(prohibited)
+            if should_generate_images:
+                self.root.after(0, self.status.set, "본문 이미지 생성 중입니다...")
+                output_dir = self._image_output_dir()
+                image_paths = generate_blog_images(
+                    api_key,
+                    result,
+                    output_dir,
+                    count=image_count,
+                    progress_callback=self._image_progress,
+                )
+                result = self._append_image_section(result, image_paths)
             self.root.after(0, self._show_result, result)
         except Exception as exc:
             self.root.after(0, self._show_error, str(exc))
+
+    def _image_output_dir(self) -> Path:
+        pdf_stem = Path(self.pdf_path.get()).stem if self.pdf_path.get() else "blog"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return Path.cwd() / "outputs" / f"{pdf_stem}_{timestamp}_images"
+
+    def _image_progress(self, completed: int, total: int) -> None:
+        self.root.after(0, self.status.set, f"본문 이미지 생성 중... {completed}/{total}장")
+
+    def _append_image_section(self, result: str, image_paths: list[Path]) -> str:
+        if not image_paths:
+            return result
+        locations = ["도입부 아래", "핵심 쟁점 설명 뒤", "상담 안내 문구 앞", "본문 중간", "마무리 전"]
+        lines = ["", "", "[생성 이미지]", "아래 이미지를 네이버 블로그 본문 중간에 업로드해 사용하세요."]
+        for index, path in enumerate(image_paths, start=1):
+            location = locations[index - 1] if index <= len(locations) else "본문 중간"
+            lines.append(f"{index}. 삽입 권장 위치: {location}")
+            lines.append(f"   파일: {path}")
+            lines.append(f"   마크다운 미리보기: ![블로그 삽입 이미지 {index}]({path})")
+        return result + "\n".join(lines)
 
     def _show_result(self, result: str) -> None:
         self.result_text.delete("1.0", END)
@@ -189,6 +243,19 @@ class BlogWriterApp:
     def clear_result(self) -> None:
         self.result_text.delete("1.0", END)
         self.status.set("결과를 지웠습니다.")
+
+    def save_key(self) -> None:
+        api_key = self.api_key.get().strip()
+        if not api_key:
+            messagebox.showwarning(APP_TITLE, "저장할 OpenAI API Key를 입력해 주세요.")
+            return
+        save_api_key(api_key)
+        self.status.set("API Key를 로컬에 저장했습니다.")
+
+    def delete_key(self) -> None:
+        delete_api_key()
+        self.api_key.set("")
+        self.status.set("저장된 API Key를 삭제했습니다.")
 
 
 def main() -> None:
